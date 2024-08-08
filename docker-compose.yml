@@ -7,7 +7,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MYSQL_HOST: my_mysql_db
+      MYSQL_HOST: db  # Cambia aquí de 'my_mysql_db' a 'db'
       MYSQL_USER: root
       MYSQL_PASSWORD: root_password
       MYSQL_DATABASE: flask_db
@@ -15,8 +15,8 @@ services:
       - ./dataset:/app/dataset
       - ./resources:/app/resources
     devices:
-      - /dev/video0:/dev/video0  # Mapea el dispositivo de cámara del host al contenedor
-    privileged: true  # Opción que da acceso a dispositivos y funcionalidades especiales (menos seguro)
+      - /dev/video0:/dev/video0
+    privileged: true
     depends_on:
       - db
     networks:
