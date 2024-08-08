@@ -14,6 +14,9 @@ services:
     volumes:
       - ./dataset:/app/dataset
       - ./resources:/app/resources
+    devices:
+      - /dev/video0:/dev/video0  # Mapea el dispositivo de cámara del host al contenedor
+    privileged: true  # Opción que da acceso a dispositivos y funcionalidades especiales (menos seguro)
     depends_on:
       - db
     networks:
@@ -21,7 +24,7 @@ services:
 
   db:
     container_name: my_mysql_db
-    image: mysql:5.7
+    image: mariadb:10.5
     environment:
       MYSQL_ROOT_PASSWORD: root_password
       MYSQL_DATABASE: flask_db

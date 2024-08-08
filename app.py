@@ -7,12 +7,22 @@ import os
 
 app = Flask(__name__)
 
+# Conexión a la base de datos Docker
 mydb = mysql.connector.connect(
     host=os.environ.get('MYSQL_HOST'),
     user=os.environ.get('MYSQL_USER'),
     password=os.environ.get('MYSQL_PASSWORD'),
     database=os.environ.get('MYSQL_DATABASE')
 )
+
+# Conexión a la base de datos XAMPP
+"""
+mydb = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    passwd="",
+    database="flask_db"
+)"""
 
 mycursor = mydb.cursor()
 
@@ -31,10 +41,61 @@ face_classifier = cv2.CascadeClassifier(face_cascade_path)
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Generate dataset >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 def generate_dataset(nbr):
     def face_cropped(img):
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = face_classifier.detectMultiScale(gray, 1.3, 5)
+
+            if len(faces) == 0:
+                return None
+            for (x, y, w, h) in faces:
+                cropped_face = img[y:y + h, x:x + w]
+            return cropped_face
+        except cv2.error as e:
+            print(f"Error de OpenCV: {e}")
+            return None
+
+    cap = cv2.VideoCapture(0)
+
+    mycursor.execute("SELECT IFNULL(MAX(img_id), 0) FROM img_dataset")
+    row = mycursor.fetchone()
+    lastid = row[0]
+
+    img_id = lastid
+    max_imgid = img_id + 100
+    count_img = 0
+
+    while True:
+        ret, img = cap.read()
+        if ret:
+            cropped_img = face_cropped(img)
+            if cropped_img is not None:
+                count_img += 1
+                img_id += 1
+                face = cv2.resize(cropped_img, (200, 200))
+                face = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+
+                file_name_path = os.path.join(dataset_dir, f"{nbr}.{img_id}.jpg")
+                cv2.imwrite(file_name_path, face)
+                cv2.putText(face, str(count_img), (50, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
+
+                mycursor.execute("INSERT INTO img_dataset (img_id, img_person) VALUES (%s, %s)", (img_id, nbr))
+                mydb.commit()
+
+                frame = cv2.imencode('.jpg', face)[1].tobytes()
+                yield (b'--frame\r\n'b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+                if cv2.waitKey(1) == 13 or img_id == max_imgid:
+                    break
+        else:
+            print("No se pudo capturar la imagen correctamente.")
+
+    cap.release()
+    cv2.destroyAllWindows()
+    def face_cropped(img):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = face_classifier.detectMultiScale(gray, 1.3, 5)
 
-        if faces == ():  # Reemplazar "is" con "==" para evitar SyntaxWarning
+        if len(faces) == 0:
             return None
         for (x, y, w, h) in faces:
             cropped_face = img[y:y + h, x:x + w]
@@ -42,7 +103,7 @@ def generate_dataset(nbr):
 
     cap = cv2.VideoCapture(0)
 
-    mycursor.execute("select ifnull(max(img_id), 0) from img_dataset")
+    mycursor.execute("SELECT IFNULL(MAX(img_id), 0) FROM img_dataset")
     row = mycursor.fetchone()
     lastid = row[0]
 
@@ -62,14 +123,13 @@ def generate_dataset(nbr):
             cv2.imwrite(file_name_path, face)
             cv2.putText(face, str(count_img), (50, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
 
-            mycursor.execute("""INSERT INTO img_dataset (img_id, img_person) VALUES
-                                ('{}', '{}')""".format(img_id, nbr))
+            mycursor.execute("INSERT INTO img_dataset (img_id, img_person) VALUES (%s, %s)", (img_id, nbr))
             mydb.commit()
 
             frame = cv2.imencode('.jpg', face)[1].tobytes()
             yield (b'--frame\r\n'b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-            if cv2.waitKey(1) == 13 or int(img_id) == int(max_imgid):
+            if cv2.waitKey(1) == 13 or img_id == max_imgid:
                 break
 
     cap.release()
@@ -99,32 +159,37 @@ def train_classifier(nbr):
     return redirect('/')
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Face Recognition >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-def face_recognition():  # generate frame by frame from camera
+def face_recognition():
     def draw_boundary(img, classifier, scaleFactor, minNeighbors, color, text, clf):
-        gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        features = classifier.detectMultiScale(gray_image, scaleFactor, minNeighbors)
+        try:
+            gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            features = classifier.detectMultiScale(gray_image, scaleFactor, minNeighbors)
 
-        coords = []
+            coords = []
 
-        for (x, y, w, h) in features:
-            cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-            id, pred = clf.predict(gray_image[y:y + h, x:x + w])
-            confidence = int(100 * (1 - pred / 300))
+            for (x, y, w, h) in features:
+                cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+                id, pred = clf.predict(gray_image[y:y + h, x:x + w])
+                confidence = int(100 * (1 - pred / 300))
 
-            mycursor.execute("select b.prs_name "
-                             "  from img_dataset a "
-                             "  left join prs_mstr b on a.img_person = b.prs_nbr "
-                             " where img_id = " + str(id))
-            s = mycursor.fetchone()
-            s = '' + ''.join(s)
+                mycursor.execute("SELECT b.prs_name "
+                                 "FROM img_dataset a "
+                                 "LEFT JOIN prs_mstr b ON a.img_person = b.prs_nbr "
+                                 "WHERE img_id = %s", (id,))
+                s = mycursor.fetchone()
+                if s:
+                    s = ''.join(s)
 
-            if confidence > 70:
-                cv2.putText(img, s, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 1, cv2.LINE_AA)
-            else:
-                cv2.putText(img, "UNKNOWN", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 1, cv2.LINE_AA)
+                if confidence > 70:
+                    cv2.putText(img, s, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 1, cv2.LINE_AA)
+                else:
+                    cv2.putText(img, "UNKNOWN", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 1, cv2.LINE_AA)
 
-            coords = [x, y, w, h]
-        return coords
+                coords = [x, y, w, h]
+            return coords
+        except cv2.error as e:
+            print(f"Error de OpenCV: {e}")
+            return []
 
     def recognize(img, clf, faceCascade):
         coords = draw_boundary(img, faceCascade, 1.1, 10, (255, 255, 0), "Face", clf)
@@ -142,6 +207,11 @@ def face_recognition():  # generate frame by frame from camera
 
     while True:
         ret, img = cap.read()
+
+        if not ret:
+            print("No se pudo capturar la imagen correctamente.")
+            break
+
         img = recognize(img, clf, faceCascade)
 
         frame = cv2.imencode('.jpg', img)[1].tobytes()
@@ -156,14 +226,14 @@ def face_recognition():  # generate frame by frame from camera
 
 @app.route('/')
 def home():
-    mycursor.execute("select prs_nbr, prs_name, prs_skill, prs_active, prs_added from prs_mstr")
+    mycursor.execute("SELECT prs_nbr, prs_name, prs_skill, prs_active, prs_added FROM prs_mstr")
     data = mycursor.fetchall()
 
     return render_template('index.html', data=data)
 
 @app.route('/addprsn')
 def addprsn():
-    mycursor.execute("select ifnull(max(prs_nbr) + 1, 101) from prs_mstr")
+    mycursor.execute("SELECT IFNULL(MAX(prs_nbr) + 1, 101) FROM prs_mstr")
     row = mycursor.fetchone()
     nbr = row[0]
 
@@ -175,8 +245,7 @@ def addprsn_submit():
     prsname = request.form.get('txtname')
     prsskill = request.form.get('optskill')
 
-    mycursor.execute("""INSERT INTO prs_mstr (prs_nbr, prs_name, prs_skill) VALUES
-                    ('{}', '{}', '{}')""".format(prsnbr, prsname, prsskill))
+    mycursor.execute("INSERT INTO prs_mstr (prs_nbr, prs_name, prs_skill) VALUES (%s, %s, %s)", (prsnbr, prsname, prsskill))
     mydb.commit()
 
     return redirect(url_for('vfdataset_page', prs=prsnbr))

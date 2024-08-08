@@ -4,12 +4,14 @@ FROM python:3.8
 RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
-    libxrender-dev
+    libxrender-dev \
+    v4l-utils \
+    ffmpeg
 
 # Establecer directorio de trabajo
 WORKDIR /app
 
-# Copiar archivos necesarios (asegúrate de incluir todos los archivos de tu aplicación)
+# Copiar archivos necesarios
 COPY . .
 
 # Instalar dependencias Python
